@@ -1,0 +1,574 @@
+# CT_CHECK 全量只读盘点报告
+
+> **盘点时间**：2026-10-26
+> **运行环境**：Process Simulate 2408.0.0.880 (eMS Standalone, PID 28912) + AC802 PLC @ 172.27.184.89:4840 + InoProShop 1.9.1.6
+> **Study**：CT_CHECK (TxPhysicalRoot, 2144 个后代对象)
+> **盘点范围**：全量只读，未修改任何文件、未启停仿真、未写 PLC、未操作 Bridge
+
+---
+
+## 一、CT_CHECK 设备树与可动机构总表
+
+### 1.1 顶层结构
+
+CT_CHECK 的 PhysicalRoot (id=1,10) 下直接挂载以下 CompoundResource（FACT，来源：`pdps.get_structure` 运行时层级）：
+
+| 序号 | 名称 | 类型 | 含义 |
+|---|---|---|---|
+| 1 | `01_快速CT` (01_Fast_CT) | TxCompoundResource | **CT2 所在区域** — 本次演示核心 |
+| 2 | `02_LBs` | TxCompoundResource | Logic Behavior 资源组 |
+| 3 | `04_Sevor` (04_Servo) | TxCompoundResource | 伺服资源组（含 S7_M31 设备） |
+| 4 | `05_Structrue` | TxCompoundResource | 结构资源组 |
+| 5 | `06_CQ` | TxCompoundResource | CQ（质量检测站？）含 CQ_Sta01/02/03 |
+| 6 | `01_Cylinder` ×2 | TxCompoundResource | 气缸资源组 |
+| 7 | `01_CT_POSITION_Sensor` | TxCompoundResource | CT 位置传感器（4 个 PlcLightSensor） |
+| 8 | `02_LAOD_POSITION_Sensor` | TxCompoundResource | 上下料位置传感器 |
+
+另有 8 个 `TxObjectFlowLocationOperation` (loc~loc7) 和若干 Operation 组。
+
+### 1.2 设备类型分布
+
+CT_CHECK 共有 **163 个 TxDevice**、**42 个 TxGripper**、**292 个 TxPlcLightSensor**、**1 个 TxPlcGenericConveyor**（FACT，来源：t06_a3_audit.cs.result.txt）。
+
+### 1.3 CT2 区域可动机构总表
+
+CT2 (01_快速CT) 是本次演示核心，包含 3 个伺服轴 + 2 个气缸。**全部已配置 External Connection 到 AC802_BRIDGE**（FACT）。
+
+| 设备 | PS 对象名 | 类型 | 关节 | 关节类型 | 当前值 | 行程范围 | LB 位置数 | External Connection | 动态验证 |
+|---|---|---|---|---|---|---|---|---|---|
+| **Y 轴 (伸缩)** | Servo[32] | TxDevice | j1 | Prismatic | 15 mm | ±999999 (无限位) | p1=15, p2=492.33 (p3-p8 空) | ✅ AC802_BRIDGE | ✅ **RUNTIME_VERIFIED** (15↔492.33 往复) |
+| **R 轴 (旋转)** | Servo[33] | TxDevice | j1 | Revolute | 0 rad | ±17453.275 | 5 个位置 (p1-p5) | ✅ AC802_BRIDGE | ✅ **RUNTIME_VERIFIED** (0↔2.356↔3.927 rad) |
+| **X 轴 (横移)** | Servo[34] | TxDevice | j1 | Prismatic | 0 mm | ±999999 (无限位) | p1=0, p2=350.58 (推断) | ✅ AC802_BRIDGE | ✅ **RUNTIME_VERIFIED** (0↔350.58) |
+| **夹具 1** | Cylinder[601] | (信号级) | — | — | — | — | Auto_V/Auto_R | ✅ AC802_BRIDGE | ❌ 未动态验证 |
+| **夹具 2** | Cylinder[602] | (信号级) | — | — | — | — | Auto_V/Auto_R | ✅ AC802_BRIDGE | ❌ 未动态验证 |
+
+**关键证据**：
+- Y 轴 LB 参数：`p1=15, p2=492.329987`（FACT，来源：`t07_probe4_20261018_191932_695.cs.result.txt`）
+- R 轴弧度单位确认：j1=2.356 (≈135°) 和 j1=3.927 (≈225°) 被 `get_joint_state` 运行时读出（FACT，来源：`pdps_rt_pdps_get_joint_state_20261018_193620_*.cs.result.txt` 和 `193703_*.cs.result.txt`）
+- X 轴运动确认：j1=350.58 和 j1=0 被 `get_joint_state` 运行时读出（FACT，来源：`pdps_rt_pdps_get_joint_state_20261018_193622_*.cs.result.txt`）
+- 17 个信号全部被 PS 订阅（CMI 全 Good）（FACT，来源：Bridge log `CREATE_MONITORED_ITEMS count=17`）
+
+### 1.4 其他可演示设备（CT_CHECK 全局）
+
+CT_CHECK 共有 **75 个 Servo 设备**（Servo[1]~Servo[75]）和大量 Sta*_C* 设备。以下为具备演示潜力的候选（INFERENCE，基于命名规律推断）：
+
+| 设备群 | 命名规律 | 数量 | 有 Logic Behavior | 演示潜力 |
+|---|---|---|---|---|
+| Servo[1]-[75] | 通用伺服 | 75 | 大部分有 LB（同 CT2 模式：8 entries/8 exits/1 action） | 中 — 但多数未配置 External Connection |
+| Sta01-07_C01-C09 | 工站气缸/夹具 | ~48 | 未知 | 低 — 需逐个确认 LB 和信号绑定 |
+| Sta08-20_C01-C14 | 工站设备 | ~60 | 未知 | 低 |
+| S7_M31 | 传送/升降 | 1 | LB counts=25/19/5/1（较复杂） | 低 — 结构复杂 |
+| CQ_Sta01-03 | 质量检测 | 3 stations | 传感器为主 | 低 — 无运动轴 |
+
+> **UNKNOWN**：除 Servo[32]/[33]/[34] 外，其他 Servo 的 External Connection 绑定状态、LB 位置参数、关节单位均未在本任务中运行时验证。t06_a3_audit 确认 Servo[12] 有完整 LB（8/8/11/1，entry_conns 全连接到 `Servo[12].Axis_In.Location_Auto[1-8]`），但未确认是否绑定到 AC802_BRIDGE。
+
+---
+
+## 二、CT2 运动机构与 Logic Behavior 明细
+
+### 2.1 Logic Behavior 通用结构
+
+所有 CT2 Servo 设备的 Logic Behavior 结构一致（FACT，来源：t07_probe4 + t03_ct_audit）：
+
+```
+Entries:  Auto_1 ~ Auto_8 (8 个布尔入口，对应 Location_Auto[1..8])
+Exits:    PosDone_1 ~ PosDone_8 (8 个到位退出信号)
+Action:   Auto_Action (TxPlcLogicBehaviorMoveJointToValueAction)
+          value_expr = "Auto_1 * p1 + Auto_2 * p2 + ... + Auto_8 * p8"
+          joint = j1
+Parameters: Jds (关节距离传感器), At_Home, AbsEx, p1~p8 (位置值)
+```
+
+**动作原理**：当某个 `Auto_N` 入口为 TRUE 时，j1 移动到 `pN` 的值。多个 Auto 同时 TRUE 时取加权和（设计上同一时刻只有一个 TRUE）。
+
+### 2.2 各轴位置参数与验证状态
+
+#### Servo[32] — Y 轴 (伸缩/升降)
+
+| 位置参数 | 值 (mm) | 对应 PLC 变量 | PS 信号 | 运行时验证 |
+|---|---|---|---|---|
+| p1 | **15** | Demo_Y_Home | Location_Auto[1] | ✅ RUNTIME_VERIFIED (j1=15 @ IDLE) |
+| p2 | **492.329987** | Demo_Y_Extend | Location_Auto[2] | ✅ RUNTIME_VERIFIED (j1=492.33 @ Step1) |
+| p3~p8 | **空 ("")** | — | Location_Auto[3-8] | N/A (未定义) |
+
+> **FACT**：Y 轴仅定义了 2 个有效位置（home=15mm, extend=492.33mm）。Location_Auto[3-4] 被 PS 订阅但 p3-p8 为空，驱动它们无运动效果。
+
+#### Servo[33] — R 轴 (旋转)
+
+| 位置参数 | 推断值 (rad) | 对应角度 (°) | 对应 PLC 变量 | PS 信号 | 运行时验证 |
+|---|---|---|---|---|---|
+| p1 | **0** | 0° | Demo_R_0 | Location_Auto[1] | ✅ RUNTIME_VERIFIED (j1=0 @ reset) |
+| p2 | **0.785** (推断) | 45° | Demo_R_45 | Location_Auto[2] | ⚠️ 推断（45°=π/4≈0.785rad） |
+| p3 | **2.356** | 135° | Demo_R_135 | Location_Auto[3] | ✅ RUNTIME_VERIFIED (j1=2.356) |
+| p4 | **3.927** | 225° | Demo_R_225 | Location_Auto[4] | ✅ RUNTIME_VERIFIED (j1=3.927) |
+| p5 | **5.498** (推断) | 315° | Demo_R_315 | Location_Auto[5] | ⚠️ 推断（315°=7π/4≈5.498rad） |
+
+> **FACT**：R 轴使用**弧度**而非角度。135°=2.356rad 和 225°=3.927rad 已被 `get_joint_state` 运行时确认。45°(0.785rad) 和 315°(5.498rad) 基于弧度换算推断（INFERENCE）。
+> **关键约束**：R 轴关节限位 ±17453.275（单位不明，可能是 0.001° 即 ±17.453°，也可能是弧度的某种缩放）。但运行时实测 j1=3.927 在限位内，说明限位范围足够覆盖所有 5 个位置。
+
+#### Servo[34] — X 轴 (横移)
+
+| 位置参数 | 值 (mm) | 对应 PLC 变量 | PS 信号 | 运行时验证 |
+|---|---|---|---|---|
+| p1 | **0** | Demo_X_Home | Location_Auto[1] | ✅ RUNTIME_VERIFIED (j1=0 @ reset) |
+| p2 | **350.58** | Demo_X_Advance | Location_Auto[2] | ✅ RUNTIME_VERIFIED (j1=350.58) |
+| p3~p8 | 未知 | — | Location_Auto[3-4] | UNKNOWN |
+
+> **FACT**：X 轴 p1=0mm 和 p2=350.58mm 已被 `get_joint_state` 运行时确认。p3-p8 值未从历史 Evidence 中找到。
+
+#### Cylinder[601] / [602] — 夹具
+
+| 信号 | 方向 | 含义 | External Connection | 运行时验证 |
+|---|---|---|---|---|
+| Cylinder[601].Cylinder_In.Auto_V | PLC→PS (命令) | 夹具1伸出 | ✅ AC802_BRIDGE | ❌ 未动态验证 |
+| Cylinder[601].Cylinder_In.Auto_R | PLC→PS (命令) | 夹具1收回 | ✅ AC802_BRIDGE | ❌ 未动态验证 |
+| Cylinder[601].Cylinder_Out.XV | PS→PLC (反馈) | 夹具1伸出到位 | ✅ AC802_BRIDGE | ❌ PS 不外发 (已确认) |
+| Cylinder[601].Cylinder_Out.XR | PS→PLC (反馈) | 夹具1收回到位 | ✅ AC802_BRIDGE | ❌ PS 不外发 (已确认) |
+| Cylinder[602].Cylinder_In.Auto_V | PLC→PS (命令) | 夹具2伸出 | ✅ AC802_BRIDGE | ❌ 未动态验证 |
+| Cylinder[602].Cylinder_In.Auto_R | PLC→PS (命令) | 夹具2收回 | ✅ AC802_BRIDGE | ❌ 未动态验证 |
+| Cylinder[602].Cylinder_Out.XV/XR | PS→PLC (反馈) | 到位反馈 | ✅ AC802_BRIDGE | ❌ PS 不外发 (已确认) |
+
+> **FACT**：Cylinder 信号在 t07_lb_owner 和 t07_check 结果中确认存在且绑定到 AC802_BRIDGE。Cylinder[601] 不是独立的 TxDevice（find_object 返回 NOT_FOUND），而是信号级别的资源对象。
+> **FACT**：PS 不通过 OPC UA 外发任何信号（包括 Cylinder_Out.XV/XR），三层独立证据确认（PS_NATIVE_SIGNAL_FEASIBILITY_REPORT.md）。
+
+---
+
+## 三、PS 全量相关 IO 信号表
+
+### 3.1 PS 已订阅的 17 个信号（CMI 全 Good）
+
+**FACT**，来源：Bridge log `CREATE_MONITORED_ITEMS count=17 => Good × 17`（2026-10-22 11:39:51 UTC）。
+
+| # | PS 信号全名 | 对象类型 | 方向 | 数据类型 | 对应 LB Entry | 对应 Joint/Action | External Connection | Bridge NodeId (ns=0) | PLC 变量 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Servo[32].Axis_In.Location_Auto[1] | TxPlcOutputSignal | PLC→PS | Bool | Auto_1 | j1→p1=15mm | AC802_BRIDGE | Application.EM00_GVL.Servo[32].Axis_In.Location_Auto[1] | GVL.Demo_Y_Home |
+| 2 | Servo[32].Axis_In.Location_Auto[2] | TxPlcOutputSignal | PLC→PS | Bool | Auto_2 | j1→p2=492.33mm | AC802_BRIDGE | ...Location_Auto[2] | GVL.Demo_Y_Extend |
+| 3 | Servo[32].Axis_In.Location_Auto[3] | TxPlcOutputSignal | PLC→PS | Bool | Auto_3 | j1→p3 (空) | AC802_BRIDGE | ...Location_Auto[3] | (未映射) |
+| 4 | Servo[32].Axis_In.Location_Auto[4] | TxPlcOutputSignal | PLC→PS | Bool | Auto_4 | j1→p4 (空) | AC802_BRIDGE | ...Location_Auto[4] | (未映射) |
+| 5 | Servo[33].Axis_In.Location_Auto[1] | TxPlcOutputSignal | PLC→PS | Bool | Auto_1 | j1→p1=0rad(0°) | AC802_BRIDGE | ...Servo[33]...Location_Auto[1] | GVL.Demo_R_0 |
+| 6 | Servo[33].Axis_In.Location_Auto[2] | TxPlcOutputSignal | PLC→PS | Bool | Auto_2 | j1→p2≈0.785rad(45°) | AC802_BRIDGE | ...Location_Auto[2] | GVL.Demo_R_45 |
+| 7 | Servo[33].Axis_In.Location_Auto[3] | TxPlcOutputSignal | PLC→PS | Bool | Auto_3 | j1→p3=2.356rad(135°) | AC802_BRIDGE | ...Location_Auto[3] | GVL.Demo_R_135 |
+| 8 | Servo[33].Axis_In.Location_Auto[4] | TxPlcOutputSignal | PLC→PS | Bool | Auto_4 | j1→p4=3.927rad(225°) | AC802_BRIDGE | ...Location_Auto[4] | GVL.Demo_R_225 |
+| 9 | Servo[33].Axis_In.Location_Auto[5] | TxPlcOutputSignal | PLC→PS | Bool | Auto_5 | j1→p5≈5.498rad(315°) | AC802_BRIDGE | ...Location_Auto[5] | GVL.Demo_R_315 |
+| 10 | Servo[34].Axis_In.Location_Auto[1] | TxPlcOutputSignal | PLC→PS | Bool | Auto_1 | j1→p1=0mm | AC802_BRIDGE | ...Servo[34]...Location_Auto[1] | GVL.Demo_X_Home |
+| 11 | Servo[34].Axis_In.Location_Auto[2] | TxPlcOutputSignal | PLC→PS | Bool | Auto_2 | j1→p2=350.58mm | AC802_BRIDGE | ...Location_Auto[2] | GVL.Demo_X_Advance |
+| 12 | Servo[34].Axis_In.Location_Auto[3] | TxPlcOutputSignal | PLC→PS | Bool | Auto_3 | j1→p3 (未知) | AC802_BRIDGE | ...Location_Auto[3] | (未映射) |
+| 13 | Servo[34].Axis_In.Location_Auto[4] | TxPlcOutputSignal | PLC→PS | Bool | Auto_4 | j1→p4 (未知) | AC802_BRIDGE | ...Location_Auto[4] | (未映射) |
+| 14 | Cylinder[601].Cylinder_In.Auto_V | TxPlcOutputSignal | PLC→PS | Bool | — | 夹具1伸出 | AC802_BRIDGE | ...Cylinder[601]...Auto_V | GVL.Demo_Clamp1_Ext |
+| 15 | Cylinder[601].Cylinder_In.Auto_R | TxPlcOutputSignal | PLC→PS | Bool | — | 夹具1收回 | AC802_BRIDGE | ...Cylinder[601]...Auto_R | GVL.Demo_Clamp1_Ret |
+| 16 | Cylinder[602].Cylinder_In.Auto_V | TxPlcOutputSignal | PLC→PS | Bool | — | 夹具2伸出 | AC802_BRIDGE | ...Cylinder[602]...Auto_V | GVL.Demo_Clamp2_Ext |
+| 17 | Cylinder[602].Cylinder_In.Auto_R | TxPlcOutputSignal | PLC→PS | Bool | — | 夹具2收回 | AC802_BRIDGE | ...Cylinder[602]...Auto_R | GVL.Demo_Clamp2_Ret |
+
+### 3.2 PS 内部存在但不外发的反馈信号
+
+| PS 信号 | 方向 | 含义 | External Connection | PS 内部值变化 | OPC UA 外发 |
+|---|---|---|---|---|---|
+| Servo[32].Axis_Out.PosDone[1] | PS→PLC | Y 到 home (15mm) | 信号名级绑定存在 | ✅ RUNTIME_VERIFIED (j1=15→true) | ❌ **PS 从不写入外部节点** |
+| Servo[32].Axis_Out.PosDone[2] | PS→PLC | Y 到 extend (492.33mm) | 信号名级绑定存在 | ✅ RUNTIME_VERIFIED (j1=492→true) | ❌ **PS 从不写入外部节点** |
+| Servo[33].Axis_Out.PosDone[1-5] | PS→PLC | R 各角度到位 | 未知 | UNKNOWN | ❌ 同上 |
+| Servo[34].Axis_Out.PosDone[1-2] | PS→PLC | X 到位 | 未知 | UNKNOWN | ❌ 同上 |
+| Cylinder[601].Cylinder_Out.XV/XR | PS→PLC | 夹具1到位 | ✅ AC802_BRIDGE | UNKNOWN | ❌ 同上 |
+| Cylinder[602].Cylinder_Out.XV/XR | PS→PLC | 夹具2到位 | ✅ AC802_BRIDGE | UNKNOWN | ❌ 同上 |
+
+> **FACT**（三层独立证据）：PS 2408 的 External Connection 是纯 OPC UA 客户端（只读消费者）。对所有映射信号只做 MONITOR/READ，从不 WRITE。这是 PS 能力根本限制，不可通过配置解决。
+> - 证据 A：T05 Step 4 — Bridge 全历史 `WRITE nodeid=` 计数 = 0
+> - 证据 B：当前 Bridge log — PosDone 节点 0 次被引用
+> - 证据 C：T01 反射 — PS 安装目录无 `Opc.Ua.Server.dll`，External Connection 接口全是客户端操作
+
+### 3.3 其他已绑定的信号（t07_check 确认）
+
+| PS 信号 | External Connection | 含义 | 说明 |
+|---|---|---|---|
+| Cylinder[601].Cylinder_Out.XV | AC802_BRIDGE | 夹具1伸出到位反馈 | PS→PLC 方向，PS 不外发 |
+| Sensor[601].O_DetectionOn | AC_802 (旧连接) | 传感器检测信号 | 仍绑定到旧的 AC_802 连接 |
+
+---
+
+## 四、原 PLC 程序动作逻辑及 `???` 问题分析
+
+### 4.1 原始完整 PLC 程序（T08-HIL fullmode）
+
+**FACT**，来源：`.local/t08-ac802-hil/plc/work/PLC_PRG_HIL_impl_original_fullmode.txt`（完整读取）
+
+#### 状态机（13 步，开环定时）
+
+| Step | 名称 | 入口输出 | 退出条件 | 定时器 |
+|---|---|---|---|---|
+| 0 | IDLE | 默认/回位状态 | Start 上升沿 → Step 1 | — |
+| 1 | CLAMP | Clamp1_Ext:=TRUE, Clamp2_Ext:=TRUE | stepTimer.Q (3s) | 3s |
+| 2 | Y_EXTEND | Y_Extend:=TRUE, Y_Home:=FALSE | stepTimer.Q | 3s |
+| 3 | X_SCAN | X_Advance:=TRUE, X_Home:=FALSE | stepTimer.Q | 3s |
+| 4 | R_45 | R_45:=TRUE, R_0:=FALSE | stepTimer.Q | 3s |
+| 5 | R_135 | R_135:=TRUE, R_45:=FALSE | stepTimer.Q | 3s |
+| 6 | R_225 | R_225:=TRUE, R_135:=FALSE | stepTimer.Q | 3s |
+| 7 | R_315 | R_315:=TRUE, R_225:=FALSE | stepTimer.Q | 3s |
+| 8 | R_HOME | R_0:=TRUE, R_315:=FALSE | stepTimer.Q | 3s |
+| 9 | X_RETURN | X_Home:=TRUE, X_Advance:=FALSE | stepTimer.Q | 3s |
+| 10 | Y_RETRACT | Y_Home:=TRUE, Y_Extend:=FALSE | stepTimer.Q | 3s |
+| 11 | UNCLAMP | Clamp1_Ret:=TRUE, Clamp2_Ret:=TRUE | stepTimer.Q | 3s |
+| 12 | COMPLETE | Clamp1_Ret:=FALSE, Clamp2_Ret:=FALSE | stepTimer.Q (500ms) → 回 IDLE | 500ms |
+
+#### 完整动作周期（工艺流程）
+
+```
+夹紧(3s) → Y伸出(3s) → X前进扫描(3s) → R旋转45°(3s) → R旋转135°(3s) → 
+R旋转225°(3s) → R旋转315°(3s) → R回零(3s) → X退回(3s) → Y退回(3s) → 
+松开(3s) → 完成(0.5s) → 回 IDLE
+```
+
+单周期 ≈ 33.5s。`Demo_TargetCycles=2`，完成 2 周期后 `Demo_AllCyclesDone=TRUE`，自动回 IDLE。
+
+#### 互锁与时序
+
+- **无跨轴互锁**：严格串行时序，每个 Step 同时赋值当前轴位和清除上一轴位，靠 CASE 单值保证互斥
+- **Guard 8s**：每步超时 → `Demo_Fault=TRUE, Demo_FaultStep=Step, Running=FALSE, Step=0`
+- **R 轴旋转方向**：0°→45°→135°→225°→315°→0°，单向递增（实际弧度 0→0.785→2.356→3.927→5.498→0）
+
+### 4.2 `???` 问题分析
+
+**FACT**：对 `t08-ac802-hil/plc/` 和 `ct-check-demo/plc/` 下所有 9 个 PLC 源文件执行了完整 grep 搜索，**未发现任何 `???` 标记**。原始完整程序是自洽的，不存在未解析的符号或占位符。
+
+> 原始 PLC 程序在历史编译过程中可能出现过 `???` 错误（如缺少 SoftMotion 库引用导致的类型解析失败），但当前仓库中的源文件版本已无此问题。如果 `???` 出现在 InoProShop 编译输出中而非源码中，则可能是编译器对缺失库类型的报错标记，需在实际编译时才能复现。
+
+### 4.3 当前 Demo PLC 程序
+
+**FACT**，来源：`.local/ct-check-demo/plc/PLC_PRG_CT_CHECK_Demo_impl.txt`
+
+| 特性 | Demo (当前) | 原始 (fullmode) |
+|---|---|---|
+| 驱动轴 | **仅 Y 轴** | Y + X + R + 2 夹具 |
+| 状态数 | 4 (IDLE→Y_EXTEND→Y_RETRACT→COMPLETE) | 13 |
+| 推进方式 | **反馈驱动** (Demo_Y_ExtendDone/HomeDone) | **定时驱动** (3s/步) |
+| 循环行为 | **无限循环** (无次数限制) | 2 周期后自动停止 |
+| 反馈变量 | Demo_Y_ExtendDone, Demo_Y_HomeDone (readwrite) | 无 |
+| Guard | 8s → Fault | 8s → Fault (相同) |
+| X/R/夹具 | **全部强制 FALSE** (隔离) | 完整驱动 |
+| 已验证运动 | ✅ Y 轴 15↔492.33mm 往复 | ❌ 完整序列未运行时验证 |
+
+---
+
+## 五、当前 Demo PLC、Bridge 及 IO Mapping 现状
+
+### 5.1 Bridge 现状
+
+**FACT**：
+- Bridge 代码：`.local/ct-check-demo/bridge/plc_forward_bridge.py` — 28 个正向节点 + 2 个反馈节点
+- **当前未运行**：4857 端口无监听，无 python bridge 进程
+- 最近一次运行日志：`plc_forward_bridge.log`（2026-10-26 04:47 启动，仅 107 行，PLC 已连接但 PS 未订阅 — 因 PS Play 未启动）
+- 历史运行日志：`plc_forward_bridge.log.pre-restart_20261023_102256`（195769 行，2026-10-22 11:38 启动，PS 已订阅 17 信号，但 PLC 仅 IDLE 状态，未触发 Demo_Start）
+
+### 5.2 Bridge IO Mapping 现状
+
+| Bridge 节点 (ns=0) | PLC 变量 (ns=4) | PS 信号 | 方向 | 映射状态 |
+|---|---|---|---|---|
+| Servo[32].Axis_In.Location_Auto[1] | GVL.Demo_Y_Home | Location_Auto[1] | PLC→PS | ✅ **已映射 + 已验证** |
+| Servo[32].Axis_In.Location_Auto[2] | GVL.Demo_Y_Extend | Location_Auto[2] | PLC→PS | ✅ **已映射 + 已验证** |
+| Servo[32].Axis_In.Location_Auto[3-8] | (无 PLC 变量) | Location_Auto[3-8] | PLC→PS | ⚠️ Bridge 创建节点但无 PLC 变量，恒 FALSE |
+| Servo[33].Axis_In.Location_Auto[1-5] | (无 PLC 变量) | Location_Auto[1-5] | PLC→PS | ❌ Bridge 创建节点但 **Demo PLC 不驱动**，恒 FALSE |
+| Servo[34].Axis_In.Location_Auto[1-4] | (无 PLC 变量) | Location_Auto[1-4] | PLC→PS | ❌ 同上 |
+| Cylinder[601].Cylinder_In.Auto_V/R | (无 PLC 变量) | Auto_V/R | PLC→PS | ❌ 同上 |
+| Cylinder[602].Cylinder_In.Auto_V/R | (无 PLC 变量) | Auto_V/R | PLC→PS | ❌ 同上 |
+| Servo[32].Axis_Out.PosDone[1-2] | GVL.Demo_Y_ExtendDone/HomeDone | PosDone[1-2] | PS→PLC | ❌ Bridge 创建节点但 **PS 从不写入** |
+
+### 5.3 运行时验证记录
+
+| 验证项 | 状态 | 证据来源 |
+|---|---|---|
+| PLC OPC UA 连接 | ✅ 可达 | Test-NetConnection 172.27.184.89:4840 = True |
+| PS 会话连接 Bridge | ✅ | Bridge log: CREATE_SESSION app='ProcessSimulate' |
+| PS 订阅 17 信号 | ✅ 全 Good | Bridge log: CREATE_MONITORED_ITEMS count=17 |
+| Y 轴命令转发 (PLC→PS) | ✅ | Bridge log: `PLC->PS step=0 running=False | Y_Home=True` |
+| Y 轴实际运动 (15↔492.33) | ✅ | get_joint_state 运行时读出 (2026-10-18) |
+| X 轴实际运动 (0↔350.58) | ✅ | get_joint_state 运行时读出 (2026-10-18) |
+| R 轴实际运动 (0↔2.356↔3.927) | ✅ | get_joint_state 运行时读出 (2026-10-18) |
+| 完整 Y 往复循环 | ✅ | CT_CHECK_Demo_闭环流程报告.md 记录 ≥2 周期 |
+| PS→PLC 反馈通道 | ❌ 不可行 | 三层证据确认 PS 不写入 OPC UA |
+
+> **重要说明**：X 和 R 轴的运动验证是通过 2026-10-18 的 `pdps.move_joint` 工具直接驱动关节完成的（单轴运动测试），**不是通过 PLC 信号链路验证的**。通过 PLC→Bridge→PS 信号链路驱动 X/R 轴尚未运行时验证，但 PS 已订阅这些信号且 External Connection 已绑定，链路在技术上是通的。
+
+---
+
+## 六、完整 PLC → PS IO Mapping 主表
+
+| 设备 | 机构/动作 | PLC 变量 | OPC UA NodeId (ns=4) | Bridge 节点 (ns=0) | PS Signal | Joint / Action | 验证状态 |
+|---|---|---|---|---|---|---|---|
+| Servo[32] | Y 回位 (15mm) | GVL.Demo_Y_Home | \|var\|Inovance-PLC.Application.GVL.Demo_Y_Home | Servo[32].Axis_In.Location_Auto[1] | Location_Auto[1] | j1→p1=15 | ✅ **RUNTIME_VERIFIED** (完整链路) |
+| Servo[32] | Y 伸出 (492.33mm) | GVL.Demo_Y_Extend | \|var\|Inovance-PLC.Application.GVL.Demo_Y_Extend | Servo[32].Axis_In.Location_Auto[2] | Location_Auto[2] | j1→p2=492.33 | ✅ **RUNTIME_VERIFIED** (完整链路) |
+| Servo[32] | Y 位置3 (空) | — | — | Servo[32].Axis_In.Location_Auto[3] | Location_Auto[3] | j1→p3 (空) | ⚠️ PS 订阅但 p3 未定义 |
+| Servo[32] | Y 位置4 (空) | — | — | Servo[32].Axis_In.Location_Auto[4] | Location_Auto[4] | j1→p4 (空) | ⚠️ 同上 |
+| Servo[33] | R 0° (0 rad) | GVL.Demo_R_0 | \|var\|Inovance-PLC.Application.GVL.Demo_R_0 | Servo[33].Axis_In.Location_Auto[1] | Location_Auto[1] | j1→p1=0 | ✅ LB配置 ✅ 关节运动验证 ❌ **PLC链路未验证** |
+| Servo[33] | R 45° (0.785 rad) | GVL.Demo_R_45 | \|var\|Inovance-PLC.Application.GVL.Demo_R_45 | Servo[33].Axis_In.Location_Auto[2] | Location_Auto[2] | j1→p2≈0.785 | ✅ LB配置 ⚠️ p2推断 ❌ **PLC链路未验证** |
+| Servo[33] | R 135° (2.356 rad) | GVL.Demo_R_135 | \|var\|Inovance-PLC.Application.GVL.Demo_R_135 | Servo[33].Axis_In.Location_Auto[3] | Location_Auto[3] | j1→p3=2.356 | ✅ LB配置 ✅ 关节运动验证 ❌ **PLC链路未验证** |
+| Servo[33] | R 225° (3.927 rad) | GVL.Demo_R_225 | \|var\|Inovance-PLC.Application.GVL.Demo_R_225 | Servo[33].Axis_In.Location_Auto[4] | Location_Auto[4] | j1→p4=3.927 | ✅ LB配置 ✅ 关节运动验证 ❌ **PLC链路未验证** |
+| Servo[33] | R 315° (5.498 rad) | GVL.Demo_R_315 | \|var\|Inovance-PLC.Application.GVL.Demo_R_315 | Servo[33].Axis_In.Location_Auto[5] | Location_Auto[5] | j1→p5≈5.498 | ✅ LB配置 ⚠️ p5推断 ❌ **PLC链路未验证** |
+| Servo[34] | X 回位 (0mm) | GVL.Demo_X_Home | \|var\|Inovance-PLC.Application.GVL.Demo_X_Home | Servo[34].Axis_In.Location_Auto[1] | Location_Auto[1] | j1→p1=0 | ✅ LB配置 ✅ 关节运动验证 ❌ **PLC链路未验证** |
+| Servo[34] | X 前进 (350.58mm) | GVL.Demo_X_Advance | \|var\|Inovance-PLC.Application.GVL.Demo_X_Advance | Servo[34].Axis_In.Location_Auto[2] | Location_Auto[2] | j1→p2=350.58 | ✅ LB配置 ✅ 关节运动验证 ❌ **PLC链路未验证** |
+| Servo[34] | X 位置3 (未知) | — | — | Servo[34].Axis_In.Location_Auto[3] | Location_Auto[3] | j1→p3 | UNKNOWN |
+| Servo[34] | X 位置4 (未知) | — | — | Servo[34].Axis_In.Location_Auto[4] | Location_Auto[4] | j1→p4 | UNKNOWN |
+| Cylinder[601] | 夹具1伸出 | GVL.Demo_Clamp1_Ext | \|var\|Inovance-PLC.Application.GVL.Demo_Clamp1_Ext | Cylinder[601].Cylinder_In.Auto_V | Auto_V | 伸出 | ✅ 信号绑定 ❌ **未动态验证** |
+| Cylinder[601] | 夹具1收回 | GVL.Demo_Clamp1_Ret | \|var\|Inovance-PLC.Application.GVL.Demo_Clamp1_Ret | Cylinder[601].Cylinder_In.Auto_R | Auto_R | 收回 | ✅ 信号绑定 ❌ **未动态验证** |
+| Cylinder[602] | 夹具2伸出 | GVL.Demo_Clamp2_Ext | \|var\|Inovance-PLC.Application.GVL.Demo_Clamp2_Ext | Cylinder[602].Cylinder_In.Auto_V | Auto_V | 伸出 | ✅ 信号绑定 ❌ **未动态验证** |
+| Cylinder[602] | 夹具2收回 | GVL.Demo_Clamp2_Ret | \|var\|Inovance-PLC.Application.GVL.Demo_Clamp2_Ret | Cylinder[602].Cylinder_In.Auto_R | Auto_R | 收回 | ✅ 信号绑定 ❌ **未动态验证** |
+| Servo[32] | Y 到 home 反馈 | GVL.Demo_Y_HomeDone | \|var\|Inovance-PLC.Application.GVL.Demo_Y_HomeDone | Servo[32].Axis_Out.PosDone[1] | PosDone[1] | ABS(Jds-p1)<0.5 | ❌ **PS不外发** (反馈通道不可行) |
+| Servo[32] | Y 到 extend 反馈 | GVL.Demo_Y_ExtendDone | \|var\|Inovance-PLC.Application.GVL.Demo_Y_ExtendDone | Servo[32].Axis_Out.PosDone[2] | PosDone[2] | ABS(Jds-p2)<0.5 | ❌ **PS不外发** (反馈通道不可行) |
+
+---
+
+## 七、方案 A：CT2 完整动作演示设计
+
+### 7.1 包含机构
+
+Y 轴 (Servo[32]) + X 轴 (Servo[34]) + R 轴 (Servo[33]) + 夹具1 (Cylinder[601]) + 夹具2 (Cylinder[602])
+
+### 7.2 推荐工艺动作顺序
+
+复用原始 fullmode 的 13 步 CT 检测工艺序列（**INFERENCE**，基于原始 PLC 程序逻辑）：
+
+```
+1. 夹紧 (Clamp1+2 伸出, 3s)
+2. Y 伸出 (Y→492.33mm, 3s)
+3. X 前进扫描 (X→350.58mm, 3s)
+4. R 旋转 45° (3s)
+5. R 旋转 135° (3s)
+6. R 旋转 225° (3s)
+7. R 旋转 315° (3s)
+8. R 回零 (3s)
+9. X 退回 (X→0mm, 3s)
+10. Y 退回 (Y→15mm, 3s)
+11. 松开 (Clamp1+2 收回, 3s)
+12. 完成 (0.5s) → 循环
+```
+
+### 7.3 PLC 变量复用与新增
+
+| 变量 | 状态 | 说明 |
+|---|---|---|
+| Demo_Y_Home/Extend | ✅ 已有 | 无需修改 |
+| Demo_X_Home/Advance | ✅ 已有 (原始 fullmode) | 需在 Demo GVL 中**新增**（当前 Demo 版已删除） |
+| Demo_R_0/45/135/225/315 | ✅ 已有 (原始 fullmode) | 需在 Demo GVL 中**新增** |
+| Demo_Clamp1_Ext/Ret | ✅ 已有 (原始 fullmode) | 需在 Demo GVL 中**新增** |
+| Demo_Clamp2_Ext/Ret | ✅ 已有 (原始 fullmode) | 需在 Demo GVL 中**新增** |
+| Demo_Y_ExtendDone/HomeDone | ⚠️ 已有但不生效 | **建议删除**（反馈通道不可行，改回开环定时） |
+| Demo_Start/Stop/Reset | ✅ 已有 | 无需修改 |
+| Demo_TargetCycles/AllCyclesDone | ✅ 已有 (原始 fullmode) | 需**新增**（控制循环次数） |
+
+### 7.4 Bridge IO Mapping 扩展
+
+| 需扩展的映射 | 当前状态 | 需要的操作 |
+|---|---|---|
+| Demo_X_Home/Advance → Bridge → PS | Bridge 节点已存在 | PLC GVL 新增变量 + Bridge 增加读取逻辑 |
+| Demo_R_0/45/135/225/315 → Bridge → PS | Bridge 节点已存在 | 同上 |
+| Demo_Clamp1/2_Ext/Ret → Bridge → PS | Bridge 节点已存在 | 同上 |
+
+> **关键发现**：Bridge 已经创建了所有 28 个正向节点的代码（`ALL_SIGNALS` 包含 X/R/Clamp），但 `PLC_VARS` 字典只读取 4 个 Y 轴变量。扩展映射**只需在 `PLC_VARS` 字典中添加变量并修改 `plc_forward_loop` 的转发逻辑**。
+
+### 7.5 需要修改的文件
+
+| 文件 | 修改内容 | 工作量 |
+|---|---|---|
+| `plc/GVL_CT_CHECK_Demo.txt` | 新增 X/R/Clamp 变量声明 + symbol 属性 | 小 |
+| `plc/PLC_PRG_CT_CHECK_Demo_impl.txt` | 恢复 13 步 CASE 序列（从 fullmode 复制），改为开环定时 | 中 |
+| `plc/PLC_PRG_CT_CHECK_Demo_decl.txt` | 恢复 TargetCycles/AllCyclesDone 变量 | 小 |
+| `bridge/plc_forward_bridge.py` | `PLC_VARS` 字典增加 11 个变量 + `plc_forward_loop` 增加转发逻辑 | 中 |
+
+### 7.6 PS 配置修改
+
+**不需要修改 PS**。External Connection 已全部绑定（17 信号全 AC802_BRIDGE），LB 位置参数已配置。
+
+### 7.7 风险
+
+| 风险 | 严重度 | 说明 |
+|---|---|---|
+| R 轴 p2/p5 位置值未运行时验证 | 中 | 45°(0.785rad) 和 315°(5.498rad) 是弧度换算推断，需实际运动确认 |
+| 夹具运动未动态验证 | 中 | Cylinder[601/602] 信号已绑定但从未通过 PLC 链路驱动过 |
+| X/R 轴 PLC 链路未验证 | 中 | PS 已订阅但未通过 PLC→Bridge→PS 完整链路驱动过（仅 move_joint 直驱验证） |
+| 机械干涉 | 低 | 原始 fullmode 序列是严格串行，无并行运动，干涉风险低 |
+| External Connection Errors 弹窗 | 低 | 已知问题，Play 后需 WM_CLOSE 关闭 |
+
+---
+
+## 八、方案 B：CT_CHECK 多设备扩展演示设计
+
+### 8.1 推荐增加的设备
+
+| 设备 | 演示动作 | 可行性 | 理由 |
+|---|---|---|---|
+| Servo[12] | 辅助轴运动 | 中 | LB 已确认（8/8/11/1），entry_conns 全连接到 Location_Auto[1-8]，但 External Connection 绑定到 AC802_BRIDGE 未确认 |
+| S7_M31 | 升降/传送 | 低 | LB 较复杂（25/19/5/1），需大量确认工作 |
+| 其他 Sta*_C* 设备 | 工站气缸 | 低 | 数量多但每个都需要确认 LB、信号绑定、运动参数 |
+
+### 8.2 多设备协同动作建议
+
+**INFERENCE**（基于设备命名推断，未运行时验证）：
+
+1. CT2 完成检测周期（方案 A 的 13 步）
+2. Servo[12] 同步执行辅助运动（如零件传送定位）
+3. 两个设备并行运动，增加视觉丰富度
+
+### 8.3 新增 PLC 变量和映射
+
+每个新增设备需要：
+- GVL 新增 `Demo_<设备>_Home/Extend` 等变量
+- Bridge `PLC_VARS` 新增对应映射
+- 确认 PS External Connection 绑定到 AC802_BRIDGE（**UNKNOWN**，需运行时确认）
+- 确认 LB 位置参数
+
+### 8.4 复杂度与风险增量
+
+| 维度 | 方案 A | 方案 B | 增量 |
+|---|---|---|---|
+| PLC 变量数 | ~15 | ~25+ | +10 |
+| Bridge 映射 | 17 | 25+ | +8 |
+| 需确认的 LB 参数 | 0 (已确认) | 8+ (每设备) | +8 |
+| 需确认的 External Connection | 0 (已确认) | 8+ | +8 |
+| 机械干涉风险 | 低 (单设备串行) | 中 (多设备并行) | +1 级 |
+| 运行时验证工作量 | 中 | 高 | +1 级 |
+
+### 8.5 不建议加入的设备
+
+| 设备 | 理由 |
+|---|---|
+| S7_M31 | LB 结构复杂（25 entries/19 exits），非标准 8-entry 模式，调试成本高 |
+| CQ_Sta01-03 | 纯传感器站，无可动机构 |
+| Sta*_C* 工站设备 | 数量庞大（100+），每个需单独确认 LB 和绑定，两小时内无法完成 |
+
+---
+
+## 九、方案 C：最低风险保底方案
+
+### 9.1 方案内容
+
+保留已验证的 Y 轴链路，**增加 1 个成本最低的动作**：
+
+**选项 C-1：Y + R 轴双轴运动**
+- Y 轴往复（已验证）+ R 轴旋转（已运行时验证关节运动）
+- PLC 增加 `Demo_R_0` 和 `Demo_R_135` 两个变量（对应 0° 和 135°）
+- Bridge 增加 2 个变量映射
+- PLC 状态机：IDLE → Y_EXTEND → R_135 → Y_RETRACT → R_0 → 循环
+- 效果：Y 上下运动 + R 旋转，视觉上比单 Y 轴丰富很多
+
+**选项 C-2：Y + X 轴双轴运动**
+- Y 轴往复 + X 轴横移
+- PLC 增加 `Demo_X_Home` 和 `Demo_X_Advance`
+- 类似 C-1
+
+### 9.2 优势
+
+| 维度 | 说明 |
+|---|---|
+| 复用已验证能力 | Y 轴完整链路已 RUNTIME_VERIFIED |
+| 新增轴运动已验证 | R 轴 0↔2.356rad 和 X 轴 0↔350.58mm 已通过 move_joint 运行时验证 |
+| PS 无需修改 | External Connection 已绑定 |
+| PLC 改动最小 | 仅新增 2 个变量 + 2 个 CASE 步骤 |
+| Bridge 改动最小 | PLC_VARS 增加 2 行 |
+| 风险最低 | 所有组件的运行时行为均已独立验证 |
+
+### 9.3 降级触发条件
+
+如果方案 A 在实施中遇到以下情况，立即降级到方案 C：
+1. 夹具 Cylinder 信号链路不通（PLC→Bridge→PS 不驱动）
+2. R 轴 45°/315° 位置参数错误（运动异常）
+3. 多轴序列导致机械干涉
+4. 时间不足（剩余 < 30 分钟）
+
+---
+
+## 十、开发修改清单、优先级、工作量与风险
+
+### 10.1 优先级分类
+
+| 优先级 | 动作/设备 | 说明 | 工作量 |
+|---|---|---|---|
+| **P0** | Y 轴往复 (Servo[32]) | 直接复用，无需修改 PS | 0 (已验证) |
+| **P0** | Bridge 启动 | 当前未运行，需启动 | 5 分钟 |
+| **P0** | PS Play 启动 | 当前未运行 | 5 分钟 (start_ps_play.ps1) |
+| **P1** | R 轴旋转 (Servo[33]) | PS 已订阅，LB 已配置，仅需 PLC 变量 + Bridge 映射 | 30 分钟 |
+| **P1** | X 轴横移 (Servo[34]) | 同上 | 30 分钟 |
+| **P1** | 夹具运动 (Cylinder[601/602]) | 同上，但从未通过 PLC 链路验证 | 30 分钟 + 验证 |
+| **P2** | 完整 13 步 CT 检测序列 | 恢复原始 fullmode PLC 逻辑 | 45 分钟 |
+| **P3** | 多设备扩展 (Servo[12] 等) | 需确认 LB/绑定/参数 | 2+ 小时 |
+
+### 10.2 推荐开发顺序
+
+```
+1. [P0] 启动 Bridge + PS Play → 确认 Y 轴链路恢复        (15 min)
+2. [P1] PLC 新增 R 轴变量 + Bridge 映射 → 验证 R 轴 PLC 链路  (30 min)
+3. [P1] PLC 新增 X 轴变量 + Bridge 映射 → 验证 X 轴 PLC 链路  (30 min)
+4. [P1] PLC 新增夹具变量 + Bridge 映射 → 验证夹具运动        (30 min)
+5. [P2] 恢复完整 13 步序列 → 端到端验证                    (45 min)
+6. [P0] 人工：IDE 写入 PLC 程序 + 编译 + 下载 + RUN         (30 min, 人工)
+7. [P0] 人工：Force Demo_Start 触发演示                    (1 min, 人工)
+```
+
+**总工作量**：约 **2.5 小时**（含人工操作），符合"两个多小时"的预算。
+
+### 10.3 主要风险
+
+| # | 风险 | 概率 | 影响 | 缓解措施 |
+|---|---|---|---|---|
+| 1 | R 轴 p2(45°)/p5(315°) 位置值不正确 | 中 | R 轴运动到错误角度 | 先只使用已验证的 0°/135°/225°，避免 45°/315° |
+| 2 | 夹具 Cylinder 链路不通 | 中 | 夹具不动作 | 方案 C 降级（去掉夹具步骤） |
+| 3 | Demo PLC 反馈驱动模式导致状态机卡死 | 高 | PLC 停在 Step 1 等 ExtendDone | **必须改回开环定时模式**（删除 ExtendDone/HomeDone 依赖） |
+| 4 | Bridge 重启后 CMI 不恢复 | 高 | PS 不收到新信号 | Play 后重新触发 PS 订阅 |
+| 5 | External Connection Errors 弹窗阻塞 | 高 | Play job 超时 | WM_CLOSE 关闭弹窗 |
+| 6 | AC802 物理输出安全 | 低 | 真实执行器误动 | 人工确认无执行器接线 |
+
+### 10.4 降级触发条件
+
+| 条件 | 降级到 | 操作 |
+|---|---|---|
+| 方案 A 步骤 4 (夹具) 失败 | 方案 C (Y+R+X, 无夹具) | 删除夹具步骤，保留 3 轴运动 |
+| 方案 A 步骤 2-3 (R/X 轴) 失败 | 方案 C-0 (仅 Y 轴, 已验证) | 回退到当前 Demo 版本 |
+| 时间不足 (< 30 min) | 方案 C-0 | 直接启动现有 Y-only Demo |
+| PLC 编译失败 | 停止 | 人工排查编译错误 |
+
+---
+
+## 十一、证据索引、未验证事项及最终建议
+
+### 11.1 证据索引
+
+| 编号 | 证据 | 来源 | 级别 |
+|---|---|---|---|
+| E01 | PS status: CT_CHECK active, ps_ready=true | `pdps.status` (本次运行时) | RUNTIME_VERIFIED |
+| E02 | Servo[32] j1 Prismatic, current=15, p1=15/p2=492.33 | `pdps.get_kinematics` + `t07_probe4` result | RUNTIME_VERIFIED |
+| E03 | Servo[33] j1 Revolute, current=0, 运动到 2.356/3.927 | `pdps.get_joint_state` 2026-10-18 results | RUNTIME_VERIFIED |
+| E04 | Servo[34] j1 Prismatic, current=0, 运动到 350.58 | `pdps.get_joint_state` 2026-10-18 results | RUNTIME_VERIFIED |
+| E05 | PS 订阅 17 信号全 Good | Bridge log CREATE_MONITORED_ITEMS | RUNTIME_VERIFIED |
+| E06 | 17 信号全绑定 AC802_BRIDGE | `hil_rebind_result.json` + `t07_check` result | RUNTIME_VERIFIED |
+| E07 | PS 不写入外部 OPC UA 节点 | T05 Step 4 + Bridge log + T01 反射 | RUNTIME_VERIFIED (三层) |
+| E08 | Y 轴完整往复运动 ≥2 周期 | CT_CHECK_Demo_闭环流程报告.md | RUNTIME_VERIFIED (历史) |
+| E09 | Bridge 代码: 28 forward + 2 feedback 节点 | `plc_forward_bridge.py` 完整读取 | SOURCE_CODE |
+| E10 | 原始 fullmode 13 步状态机 | `PLC_PRG_HIL_impl_original_fullmode.txt` 完整读取 | SOURCE_CODE |
+| E11 | 无 `???` 标记 | grep 全部 9 个 PLC 文件 | FACT |
+| E12 | Servo[12] LB 8/8/11/1, entry_conns 全连接 | `t03_ct_audit.json` | RUNTIME_VERIFIED |
+| E13 | CT_CHECK 163 TxDevice, 75 Servo | `t06_a3_audit.cs.result.txt` | RUNTIME_VERIFIED |
+
+### 11.2 未验证事项
+
+| # | 事项 | 性质 | 验证方式 |
+|---|---|---|---|
+| 1 | R 轴 p2=0.785rad(45°) 和 p5=5.498rad(315°) 的准确值 | INFERENCE | 需运行时读取 Servo[33] LB 参数或驱动 Location_Auto[2]/[5] 观测 j1 |
+| 2 | X 轴 p3/p4 位置值 | UNKNOWN | 需运行时读取 Servo[34] LB 参数 |
+| 3 | 夹具 Cylinder[601/602] 通过 PLC 链路驱动 | 未验证 | 需实际 PLC→Bridge→PS 驱动测试 |
+| 4 | X/R 轴通过 PLC 链路驱动 (非 move_joint 直驱) | 未验证 | 需实际 PLC→Bridge→PS 驱动测试 |
+| 5 | 其他 Servo[1-75] 的 External Connection 绑定 | UNKNOWN | 需逐个查询信号绑定 |
+| 6 | Servo[33] 关节限位 ±17453.275 的单位 | UNKNOWN | 限位单位可能是 0.001° 或弧度缩放，但 3.927rad 在限位内说明范围足够 |
+| 7 | PLC 当前运行状态 (RUN/STOP) | UNKNOWN | InoProShop 工具不可用 (IDE 开错工程) |
+
+### 11.3 最终建议
+
+**推荐方案：A → C 渐进实施**
+
+1. **立即执行**：启动 Bridge + PS Play，恢复 Y 轴已验证链路（P0，15 分钟）
+2. **优先扩展**：增加 R 轴（仅使用已验证的 0°/135°/225°）+ X 轴到 PLC/Bridge（P1，60 分钟）
+3. **视情况扩展**：增加夹具步骤（P1，30 分钟 + 验证）
+4. **最终目标**：恢复完整 13 步 CT 检测序列（P2，45 分钟）
+5. **保底方案**：如果任何步骤失败，降级到 Y+R 双轴或 Y 单轴
+
+**关键前置修改**：
+- **必须将 Demo PLC 从反馈驱动改回开环定时**（当前 Demo 版的 `Demo_Y_ExtendDone`/`HomeDone` 依赖永远无法满足，因为 PS 不外发反馈信号）
+- 直接从 `PLC_PRG_HIL_impl_original_fullmode.txt` 复制 13 步 CASE 逻辑，改回开环 3s 定时
+- 删除 `Demo_Y_ExtendDone`/`HomeDone` 反馈变量（或保留但不作为推进条件）
+
+**PS 侧零修改**：所有 External Connection、LB 参数、信号绑定均已配置完成，无需修改 PS Study。
